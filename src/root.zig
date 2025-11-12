@@ -103,8 +103,8 @@ const ZigCAllocator = struct {
         }
     };
 
-    // Pack alignment + total size into a single usize
-    const Metadata = packed struct(usize) {
+    // Pack alignment + total size into a single u64
+    const Metadata = packed struct(u64) {
         alignment: Alignment,
         total_size: Size,
 
@@ -134,15 +134,15 @@ const ZigCAllocator = struct {
 
     inline fn addMetadataAndReturnPtr(aligned_addr: Pointer, size: Size, alignment: std.mem.Alignment) ?*anyopaque {
         const aligned_ptr = aligned_addr.toPtr();
-        const header: *Metadata = @alignCast(@ptrCast(aligned_ptr));
-        header.* = Metadata.init(size, alignment);
+        const header: *Metadata = @ptrCast(@alignCast(aligned_ptr));
+        header.* = .init(size, alignment);
         return @ptrCast(aligned_ptr + @sizeOf(Metadata));
     }
 
     // Helper to get header from user pointer
     inline fn metadata(ptr: *anyopaque) *const Metadata {
         const bytes_ptr: [*]u8 = @ptrCast(ptr);
-        return @alignCast(@ptrCast(bytes_ptr - @sizeOf(Metadata)));
+        return @ptrCast(@alignCast(bytes_ptr - @sizeOf(Metadata)));
     }
 
     fn alloc(self: ZigCAllocator, comptime alignment: ?std.mem.Alignment, size: usize) ?*anyopaque {
@@ -158,7 +158,11 @@ const ZigCAllocator = struct {
                     else => unreachable,
                 };
             } else {
-                break :ptr self.backing_allocator.alignedAlloc(u8, .fromByteUnits(max_align_t), full_size) catch return null;
+                break :ptr self.backing_allocator.alignedAlloc(
+                    u8,
+                    .fromByteUnits(max_align_t),
+                    full_size,
+                ) catch return null;
             }
         };
 
