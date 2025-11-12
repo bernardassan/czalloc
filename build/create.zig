@@ -12,7 +12,7 @@ pub const LibOptions = struct {
 };
 
 pub fn lib(b: *std.Build, options: LibOptions) struct { *std.Build.Module, *std.Build.Step.Compile } {
-    const lib_mod = b.createModule(.{
+    const lib_mod = b.addModule("czalloc", .{
         .root_source_file = b.path("src/root.zig"),
         .target = options.target,
         .optimize = options.optimize,
