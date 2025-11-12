@@ -83,7 +83,6 @@ pub fn addCase(
 
             const c_exe = b.addExecutable(.{
                 .name = annotated_case_name,
-                .optimize = mode,
                 .root_module = c_module,
                 .use_lld = lib_options.use_lld,
                 .use_llvm = lib_options.use_llvm,

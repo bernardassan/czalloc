@@ -1,11 +1,13 @@
 const std = @import("std");
+const Io = std.Io;
 const builtin = @import("builtin");
-// `dependencies` field can't be represented https://github.com/ziglang/zig/issues/22775
+
 const build_zon: struct {
     name: @Type(.enum_literal),
     version: []const u8,
     fingerprint: u64,
     minimum_zig_version: []const u8,
+    // `dependencies` field can't be represented https://github.com/ziglang/zig/issues/22775
     dependencies: struct {},
     paths: []const []const u8,
 } = @import("build.zig.zon");
@@ -13,8 +15,8 @@ const build_zon: struct {
 const create = @import("build/create.zig");
 const test_cases = @import("test/cases.zig");
 
-const COMPILE_FLAGS_MAX_LEN = 32;
-const CompileFlags = std.BoundedArray([]const u8, COMPILE_FLAGS_MAX_LEN);
+const CompileFlags = std.ArrayList([]const u8);
+const compile_flags_max_len = 32;
 
 comptime {
     checkVersion();
@@ -62,8 +64,9 @@ pub fn build(b: *std.Build) !void {
 
     test_step.dependOn(&run_lib_unit_tests.step);
 
-    var compile_flags_buf = CompileFlags.init(0) catch @panic("Buffer Overflow");
-    const cflags = loadCompileFlags("compile_flags.txt", &compile_flags_buf);
+    var compile_flags_buffer: [compile_flags_max_len][]const u8 = undefined;
+    var compile_flags: CompileFlags = .initBuffer(&compile_flags_buffer);
+    const cflags = loadCompileFlags("compile_flags.txt", &compile_flags);
 
     try test_cases.addCase(b, test_step, .{
         .lib_options = lib_options,
@@ -78,16 +81,17 @@ pub fn build(b: *std.Build) !void {
 
 fn loadCompileFlags(comptime path: []const u8, array: *CompileFlags) []const []const u8 {
     //use -Werror for compilation only
-    array.appendAssumeCapacity("-Werror");
+    array.appendBounded("-Werror") catch unreachable;
 
     const compile_flags = @embedFile(path);
     var itr = std.mem.splitScalar(u8, compile_flags, '\n');
     while (itr.next()) |line| {
         if (line.len == 0) break; // End of Stream
         if (line[0] == '#') continue; // A comment
-        array.appendAssumeCapacity(line);
+        array.appendBounded(line) catch unreachable;
     }
-    return array.constSlice();
+
+    return array.items[0..array.items.len];
 }
 
 // ensures the currently in-use zig version is at least the minimum required
