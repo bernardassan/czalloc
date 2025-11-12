@@ -2,7 +2,7 @@ const std = @import("std");
 const debug = std.debug;
 const builtin = @import("builtin");
 
-pub const std_options: std.Options = .{ .log_level = .debug };
+const std_options: std.Options = .{ .log_level = .debug };
 const log = std.log.scoped(.czalloc);
 
 /// maximum (most strict) alignment requirement for any C scalar type on this target
@@ -11,25 +11,24 @@ const max_align_t: u16 = builtin.target.cTypeAlignment(.longdouble);
 /// 1GiB static buffer allocation
 var buffer: [1 << 30]u8 = undefined;
 var fixed_allocator: std.heap.FixedBufferAllocator = .init(&buffer);
-const fba = fixed_allocator.threadSafeAllocator();
+pub const fba = fixed_allocator.threadSafeAllocator();
 
 // Use Zig's GeneralPurposeAllocator (or another allocator of your choice)
-var debug_allocator: std.heap.DebugAllocator(.{
+pub var dbga: std.heap.DebugAllocator(.{
     .safety = true,
     .thread_safe = true,
 }) = .init;
 
 const _gpa = gpa: {
     break :gpa switch (builtin.mode) {
-        .Debug, .ReleaseSafe => .{ debug_allocator.allocator(), true },
-        .ReleaseSmall => .{ fba, false },
-        .ReleaseFast => .{ std.heap.smp_allocator, false },
+        .Debug, .ReleaseSafe => .{ dbga.allocator(), .checked },
+        .ReleaseSmall => .{ fba, .unchecked },
+        .ReleaseFast => .{ std.heap.smp_allocator, .unchecked },
     };
 };
-const backing_gpa = _gpa.@"0";
-const is_debug = _gpa.@"1";
 
-const gpa = ZigCAllocator.init(backing_gpa);
+pub const backing_allocator = _gpa.@"0";
+pub const gpa = Czalloc.init(backing_allocator);
 
 // https://github.com/zig-gamedev/zstbi/blob/094c4bba5cdbec167d3f6aaa98cccccd5c99145f/src/zstbi.zig#L388
 // https://gist.github.com/pfgithub/65c13d7dc889a4b2ba25131994be0d20
@@ -38,7 +37,7 @@ const gpa = ZigCAllocator.init(backing_gpa);
 // https://embeddedartistry.com/blog/2017/02/22/generating-aligned-memory/
 // https://developer.ibm.com/articles/pa-dalign/
 
-const ZigCAllocator = struct {
+const Czalloc = struct {
     backing_allocator: std.mem.Allocator,
 
     const Pointer = enum(usize) {
@@ -128,8 +127,13 @@ const ZigCAllocator = struct {
         }
     };
 
-    pub fn init(backing_allocator: std.mem.Allocator) ZigCAllocator {
-        return .{ .backing_allocator = backing_allocator };
+    pub fn init(allocator: std.mem.Allocator) Czalloc {
+        return .{ .backing_allocator = allocator };
+    }
+
+    pub fn deinit(_: Czalloc) void {
+        checkLeaks();
+        fixed_allocator.reset();
     }
 
     inline fn addMetadataAndReturnPtr(aligned_addr: Pointer, size: Size, alignment: std.mem.Alignment) ?*anyopaque {
@@ -145,7 +149,7 @@ const ZigCAllocator = struct {
         return @ptrCast(@alignCast(bytes_ptr - @sizeOf(Metadata)));
     }
 
-    fn alloc(self: ZigCAllocator, comptime alignment: ?std.mem.Alignment, size: usize) ?*anyopaque {
+    pub fn alloc(self: Czalloc, comptime alignment: ?std.mem.Alignment, size: usize) ?*anyopaque {
         const full_size = size + @sizeOf(Metadata);
         const aligned_ptr = ptr: {
             if (alignment) |alignment_| {
@@ -173,7 +177,7 @@ const ZigCAllocator = struct {
         );
     }
 
-    fn posixMemAlign(self: ZigCAllocator, memptr: *?*anyopaque, comptime alignment: std.mem.Alignment, size: usize) u32 {
+    pub fn posixMemAlign(self: Czalloc, memptr: *?*anyopaque, comptime alignment: std.mem.Alignment, size: usize) u32 {
         if (size == 0) {
             memptr.* = null;
             return 0;
@@ -189,7 +193,7 @@ const ZigCAllocator = struct {
         return 0; // Success
     }
 
-    fn alignedAlloc(self: ZigCAllocator, comptime alignment: std.mem.Alignment, size: usize) ?*anyopaque {
+    pub fn alignedAlloc(self: Czalloc, comptime alignment: std.mem.Alignment, size: usize) ?*anyopaque {
         var memptr: ?*anyopaque = undefined;
         const status = self.posixMemAlign(&memptr, alignment, size);
         return switch (status) {
@@ -198,7 +202,7 @@ const ZigCAllocator = struct {
         };
     }
 
-    fn free(self: ZigCAllocator, ptr: ?*anyopaque) void {
+    pub fn free(self: Czalloc, ptr: ?*anyopaque) void {
         if (ptr) |p| {
             const metadata_ = metadata(p);
             const original_ptr = metadata_.allocPtr();
@@ -219,7 +223,7 @@ const ZigCAllocator = struct {
         }
     }
 
-    fn realloc(self: ZigCAllocator, ptr: ?*anyopaque, new_size: usize) ?*anyopaque {
+    pub fn realloc(self: Czalloc, ptr: ?*anyopaque, new_size: usize) ?*anyopaque {
         if (ptr == null) return self.alloc(null, new_size);
         const metadata_ = metadata(ptr.?);
 
@@ -237,12 +241,12 @@ const ZigCAllocator = struct {
 };
 
 // Export C-compatible allocator functions
-export fn malloc(size: usize) ?*anyopaque {
+pub export fn malloc(size: usize) ?*anyopaque {
     log.debug("malloc of size {}", .{size});
     return gpa.alloc(null, size);
 }
 
-export fn calloc(nmemb: usize, size: usize) ?*anyopaque {
+pub export fn calloc(nmemb: usize, size: usize) ?*anyopaque {
     log.debug("calloc {} memb with size {}", .{ nmemb, size });
     const total_size = nmemb * size;
     const mem = gpa.alloc(null, total_size);
@@ -251,12 +255,12 @@ export fn calloc(nmemb: usize, size: usize) ?*anyopaque {
     return mem;
 }
 
-export fn realloc(memptr: ?*anyopaque, new_size: usize) ?*anyopaque {
+pub export fn realloc(memptr: ?*anyopaque, new_size: usize) ?*anyopaque {
     log.debug("realloc {*} with size {}", .{ memptr, new_size });
     return gpa.realloc(memptr, new_size);
 }
 
-export fn posix_memalign(memptr: *?*anyopaque, alignment: usize, size: usize) u32 {
+pub export fn posix_memalign(memptr: *?*anyopaque, alignment: usize, size: usize) u32 {
     log.debug("posix_memalign with alignment {} and size {}", .{ alignment, size });
     return switch (alignment) {
         inline 16, 32, 64 => |alignment_bytes| gpa.posixMemAlign(memptr, .fromByteUnits(alignment_bytes), size),
@@ -264,7 +268,7 @@ export fn posix_memalign(memptr: *?*anyopaque, alignment: usize, size: usize) u3
     };
 }
 
-export fn aligned_alloc(alignment: usize, size: usize) ?*anyopaque {
+pub export fn aligned_alloc(alignment: usize, size: usize) ?*anyopaque {
     log.debug("aligned_alloc with alignment {} and size {}", .{ alignment, size });
     return switch (alignment) {
         inline 16, 32, 64 => |alignment_bytes| gpa.alignedAlloc(.fromByteUnits(alignment_bytes), size),
@@ -272,7 +276,7 @@ export fn aligned_alloc(alignment: usize, size: usize) ?*anyopaque {
     };
 }
 
-export fn free(memptr: ?*anyopaque) void {
+pub export fn free(memptr: ?*anyopaque) void {
     if (memptr) |ptr| {
         log.debug("free {*}", .{ptr});
         gpa.free(ptr);
@@ -288,19 +292,23 @@ export fn free(memptr: ?*anyopaque) void {
 /// Free all glibc allocated resources.
 extern "c" fn __libc_freeres() void;
 
-export fn checkLeaks() void {
-    if (builtin.target.isGnuLibC()) {
-        log.debug("freeing all glibc global resources with __libc_freeres", .{});
-        __libc_freeres();
-    }
+pub export fn checkLeaks() void {
+    switch (_gpa.@"1") {
+        .checked => {
+            if (builtin.target.isGnuLibC()) {
+                log.debug("freeing all glibc global resources with __libc_freeres", .{});
+                __libc_freeres();
+            }
 
-    if (is_debug) {
-        switch (debug_allocator.deinit()) {
-            .leak => {
-                log.debug("Leaks detected", .{});
-                std.process.exit(1);
-            },
-            .ok => log.debug("No leaks detected. Happy Programming", .{}),
-        }
+            switch (dbga.deinit()) {
+                .leak => {
+                    log.debug("Leaks detected", .{});
+                    std.process.exit(1);
+                },
+                .ok => log.debug("No leaks detected. Happy Programming", .{}),
+            }
+        },
+        .unchecked => {},
+        else => unreachable,
     }
 }
