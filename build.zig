@@ -3,7 +3,7 @@ const Io = std.Io;
 const builtin = @import("builtin");
 
 const build_zon: struct {
-    name: @Type(.enum_literal),
+    name: @EnumLiteral(),
     version: []const u8,
     fingerprint: u64,
     minimum_zig_version: []const u8,
@@ -28,7 +28,7 @@ pub fn build(b: *std.Build) !void {
 
     const no_bin = b.option(bool, "no-bin", "skip emitting binary for incremental compilation checks") orelse false;
     const strip = b.option(bool, "strip", "Strip debug information") orelse false;
-    const want_lto = b.option(bool, "lto", "Enable link time optimization") orelse false;
+    const lto = b.option(std.zig.LtoMode, "lto", "Enable link time optimization") orelse .none;
     const use_llvm = b.option(bool, "llvm", "Use the llvm codegen backend") orelse false;
     const use_lld = b.option(bool, "lld", "Use the llvm's lld linker") orelse false;
     const linkage = b.option(std.builtin.LinkMode, "linkage", "Choose linkage of czalloc") orelse .static;
@@ -40,7 +40,7 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
         .linkage = linkage,
-        .want_lto = want_lto,
+        .lto = lto,
         .use_lld = use_lld,
         .use_llvm = use_llvm,
         .pie = use_llvm,

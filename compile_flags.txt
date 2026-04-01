@@ -12,3 +12,4 @@
 -Wno-vla
 -Wno-switch-default
 -Wno-unsafe-buffer-usage
+-Wno-implicit-void-ptr-cast

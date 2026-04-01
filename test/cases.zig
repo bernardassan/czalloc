@@ -12,6 +12,7 @@ pub fn addCase(
     tests_step: *std.Build.Step,
     options: CaseOptions,
 ) !void {
+    const io = b.graph.io;
     const lib_options = options.lib_options;
     const czalloc_libs = blk: {
         var libs: [4]*std.Build.Step.Compile = undefined;
@@ -21,7 +22,7 @@ pub fn addCase(
                 .strip = lib_options.strip,
                 .target = lib_options.target,
                 .linkage = lib_options.linkage,
-                .want_lto = lib_options.want_lto,
+                .lto = lib_options.lto,
                 .use_lld = lib_options.use_lld,
                 .use_llvm = lib_options.use_llvm,
                 .pie = lib_options.use_llvm,
@@ -34,20 +35,20 @@ pub fn addCase(
     const run_step = b.step("run-cases", "Run the test cases");
     tests_step.dependOn(run_step);
 
-    var dir = b.build_root.handle.openDir("test/cases", .{ .iterate = true }) catch |err| {
+    var dir = b.build_root.handle.openDir(io, "test/cases", .{ .iterate = true }) catch |err| {
         const fail_step = b.addFail(b.fmt("unable to open test/cases: {s}\n", .{@errorName(err)}));
         run_step.dependOn(&fail_step.step);
         return;
     };
-    defer dir.close();
+    defer dir.close(io);
 
     const max_file_size = std.fmt.parseIntSizeSuffix("1MiB", 10) catch unreachable;
 
     var it = try dir.walk(b.allocator);
-    while (try it.next()) |entry| {
+    while (try it.next(io)) |entry| {
         if (entry.kind != .file) continue;
 
-        const src_input = try dir.readFileAlloc(b.allocator, entry.path, max_file_size);
+        const src_input = try dir.readFileAlloc(io, entry.path, b.allocator, .limited(max_file_size));
         const write_src = b.addWriteFiles();
         const file_source = write_src.add("tmp.c", src_input);
 
@@ -88,12 +89,12 @@ pub fn addCase(
                 .use_llvm = lib_options.use_llvm,
             });
             c_exe.pie = lib_options.pie;
-            c_exe.want_lto = lib_options.want_lto;
+            c_exe.lto = lib_options.lto;
             c_exe.step.name = b.fmt("{s} test", .{annotated_case_name});
 
             const run_exe = b.addRunArtifact(c_exe);
             run_exe.step.name = b.fmt("{s} run", .{annotated_case_name});
-            _ = run_exe.captureStdErr(); //ignore output
+            _ = run_exe.captureStdErr(.{}); //ignore output
             run_exe.expectExitCode(0);
             run_exe.skip_foreign_checks = true;
 

@@ -7,7 +7,7 @@ pub const LibOptions = struct {
     use_lld: bool,
     use_llvm: bool,
     pie: bool,
-    want_lto: bool,
+    lto: std.zig.LtoMode,
     strip: bool,
 };
 
@@ -30,7 +30,7 @@ pub fn lib(b: *std.Build, options: LibOptions) struct { *std.Build.Module, *std.
         .use_llvm = options.use_llvm,
     });
     lib_comp.pie = options.use_llvm;
-    lib_comp.want_lto = options.want_lto;
+    lib_comp.lto = options.lto;
 
     return .{ lib_mod, lib_comp };
 }
